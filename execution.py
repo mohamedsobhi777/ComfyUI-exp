@@ -1,3 +1,98 @@
+"""
+This module provides functionality for executing and managing prompts in ComfyUI.
+
+Key Components:
+- PromptExecutor: Handles the execution of individual prompts
+- PromptQueue: Manages a queue of prompts to be executed
+- Validation: Functions for validating prompts and their inputs
+
+The execution flow works as follows:
+1. Prompts are validated using validate_prompt() 
+2. Valid prompts are added to the PromptQueue
+3. PromptExecutor executes prompts from the queue
+4. Results are cached and status is tracked
+
+Main Classes:
+-------------
+
+ExecutionResult (Enum):
+    Represents the result status of executing a node:
+    - SUCCESS: Node executed successfully
+    - FAILURE: Node execution failed
+    - PENDING: Node execution is pending/waiting
+
+DuplicateNodeError (Exception):
+    Raised when attempting to add a duplicate node ID to a graph
+
+IsChangedCache:
+    Caches whether nodes have changed between executions
+    Used to optimize re-execution of unchanged nodes
+
+CacheSet:
+    Manages different types of caches used during execution:
+    - outputs: Caches node output values
+    - ui: Caches UI-related outputs
+    - objects: Caches instantiated node objects
+
+PromptExecutor:
+    Handles execution of individual prompts
+    - Manages caches
+    - Tracks execution status
+    - Handles errors
+    - Reports progress
+
+PromptQueue:
+    Thread-safe queue for managing multiple prompts
+    - Maintains execution history
+    - Handles queue operations (add/remove/clear)
+    - Tracks currently running prompts
+    - Manages execution flags
+
+Key Functions:
+-------------
+
+validate_prompt(prompt):
+    Validates an entire prompt before execution
+    - Checks for required node properties
+    - Validates node connections
+    - Returns validation status and any errors
+
+validate_inputs(prompt, item, validated): 
+    Validates inputs for a single node
+    - Type checking
+    - Value range validation
+    - Custom validation rules
+
+execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results):
+    Executes a single node
+    - Handles caching
+    - Manages execution state
+    - Reports progress
+    - Handles errors
+
+get_input_data(inputs, class_def, unique_id, outputs, dynprompt, extra_data):
+    Gets input data for a node
+    - Resolves input connections
+    - Handles lazy evaluation
+    - Validates input types
+
+Important Implementation Details:
+-------------------------------
+
+- Thread Safety: PromptQueue uses locks to ensure thread-safe operation
+- Caching: Multiple cache levels optimize performance
+- Error Handling: Detailed error reporting with stack traces
+- Progress Tracking: Real-time execution status updates
+- History: Maintains execution history with configurable size
+- Validation: Extensive input validation before execution
+
+The system is designed to be:
+- Robust: Extensive error handling and validation
+- Efficient: Multi-level caching and optimization
+- Flexible: Supports dynamic prompt modification
+- Maintainable: Clear separation of concerns
+"""
+
 import sys
 import copy
 import logging

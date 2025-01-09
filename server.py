@@ -1,3 +1,27 @@
+"""
+ComfyUI Server Module
+
+This module implements a web server for ComfyUI using aiohttp. It provides REST APIs and WebSocket 
+functionality for managing prompts, workflows, models, and other ComfyUI features.
+
+Key Components:
+- PromptServer: Main server class that handles HTTP routes and WebSocket connections
+- Routes: REST API endpoints for various ComfyUI functionality
+- WebSocket: Real-time communication with clients
+- Distributed Execution: Support for distributed workflow processing
+
+The server supports:
+- File uploads/downloads
+- Prompt execution
+- Queue management  
+- Model management
+- System monitoring
+- WebSocket events
+- Custom node extensions
+- User management
+- Distributed execution
+"""
+
 import os
 import sys
 import asyncio
@@ -33,18 +57,33 @@ from app.model_manager import ModelFileManager
 from app.custom_node_manager import CustomNodeManager
 from typing import Optional
 from api_server.routes.internal.internal_routes import InternalRoutes
+from distributed_execution import DistributedExecutionManager
 
 class BinaryEventTypes:
+    """Constants for binary WebSocket event types"""
     PREVIEW_IMAGE = 1
     UNENCODED_PREVIEW_IMAGE = 2
 
 async def send_socket_catch_exception(function, message):
+    """
+    Helper function to safely send WebSocket messages and handle connection errors
+    
+    Args:
+        function: WebSocket send function to call
+        message: Message to send
+    """
     try:
         await function(message)
     except (aiohttp.ClientError, aiohttp.ClientPayloadError, ConnectionResetError, BrokenPipeError, ConnectionError) as err:
         logging.warning("send error: {}".format(err))
 
 def get_comfyui_version():
+    """
+    Get the current ComfyUI version from git tags
+    
+    Returns:
+        str: Version string or "unknown" if version cannot be determined
+    """
     comfyui_version = "unknown"
     repo_path = os.path.dirname(os.path.realpath(__file__))
     try:
@@ -61,12 +100,31 @@ def get_comfyui_version():
 
 @web.middleware
 async def cache_control(request: web.Request, handler):
+    """
+    Middleware to set cache control headers for static assets
+    
+    Args:
+        request: Web request
+        handler: Request handler
+        
+    Returns:
+        Response with cache headers set
+    """
     response: web.Response = await handler(request)
     if request.path.endswith('.js') or request.path.endswith('.css'):
         response.headers.setdefault('Cache-Control', 'no-cache')
     return response
 
 def create_cors_middleware(allowed_origin: str):
+    """
+    Create CORS middleware with specified allowed origin
+    
+    Args:
+        allowed_origin: Origin to allow CORS requests from
+        
+    Returns:
+        Middleware function
+    """
     @web.middleware
     async def cors_middleware(request: web.Request, handler):
         if request.method == "OPTIONS":
@@ -84,6 +142,15 @@ def create_cors_middleware(allowed_origin: str):
     return cors_middleware
 
 def is_loopback(host):
+    """
+    Check if a hostname resolves to a loopback address
+    
+    Args:
+        host: Hostname to check
+        
+    Returns:
+        bool: True if hostname resolves to loopback, False otherwise
+    """
     if host is None:
         return False
     try:
@@ -110,6 +177,12 @@ def is_loopback(host):
 
 
 def create_origin_only_middleware():
+    """
+    Create middleware that validates request origin matches host
+    
+    Returns:
+        Middleware function that checks origin headers
+    """
     @web.middleware
     async def origin_only_middleware(request: web.Request, handler):
         #this code is used to prevent the case where a random website can queue comfy workflows by making a POST to 127.0.0.1 which browsers don't prevent for some dumb reason.
@@ -146,6 +219,19 @@ def create_origin_only_middleware():
     return origin_only_middleware
 
 class PromptServer():
+    """
+    Main server class that handles HTTP routes and WebSocket connections
+    
+    Attributes:
+        instance: Global singleton instance
+        app: aiohttp web application
+        routes: Route table for HTTP endpoints
+        sockets: Dictionary of active WebSocket connections
+        prompt_queue: Queue for managing prompt execution
+        messages: Queue for WebSocket messages
+        client_session: aiohttp client session
+        distributed_manager: Manager for distributed execution
+    """
     def __init__(self, loop):
         PromptServer.instance = self
 
@@ -162,6 +248,7 @@ class PromptServer():
         self.messages = asyncio.Queue()
         self.client_session:Optional[aiohttp.ClientSession] = None
         self.number = 0
+        self.distributed_manager = DistributedExecutionManager()
 
         middlewares = [cache_control]
         if args.enable_cors_header:
@@ -187,6 +274,7 @@ class PromptServer():
 
         @routes.get('/ws')
         async def websocket_handler(request):
+            """Handle WebSocket connections"""
             ws = web.WebSocketResponse()
             await ws.prepare(request)
             sid = request.rel_url.query.get('clientId', '')
@@ -214,6 +302,7 @@ class PromptServer():
 
         @routes.get("/")
         async def get_root(request):
+            """Serve frontend index.html"""
             response = web.FileResponse(os.path.join(self.web_root, "index.html"))
             response.headers['Cache-Control'] = 'no-cache'
             response.headers["Pragma"] = "no-cache"
@@ -222,17 +311,20 @@ class PromptServer():
 
         @routes.get("/embeddings")
         def get_embeddings(self):
+            """Get list of available embeddings"""
             embeddings = folder_paths.get_filename_list("embeddings")
             return web.json_response(list(map(lambda a: os.path.splitext(a)[0], embeddings)))
 
         @routes.get("/models")
         def list_model_types(request):
+            """Get list of model types"""
             model_types = list(folder_paths.folder_names_and_paths.keys())
 
             return web.json_response(model_types)
 
         @routes.get("/models/{folder}")
         async def get_models(request):
+            """Get list of models in specified folder"""
             folder = request.match_info.get("folder", None)
             if not folder in folder_paths.folder_names_and_paths:
                 return web.Response(status=404)
@@ -241,6 +333,7 @@ class PromptServer():
 
         @routes.get("/extensions")
         async def get_extensions(request):
+            """Get list of available frontend extensions"""
             files = glob.glob(os.path.join(
                 glob.escape(self.web_root), 'extensions/**/*.js'), recursive=True)
 
@@ -254,6 +347,7 @@ class PromptServer():
             return web.json_response(extensions)
 
         def get_dir_by_type(dir_type):
+            """Helper to get directory path by type"""
             if dir_type is None:
                 dir_type = "input"
 
@@ -267,6 +361,7 @@ class PromptServer():
             return type_dir, dir_type
 
         def compare_image_hash(filepath, image):
+            """Compare hash of two images to check if identical"""
             hasher = node_helpers.hasher()
 
             # function to compare hashes of two images to see if it already exists, fix to #3465
@@ -282,6 +377,7 @@ class PromptServer():
             return False
 
         def image_upload(post, image_save_function=None):
+            """Handle image upload request"""
             image = post.get("image")
             overwrite = post.get("overwrite")
             image_is_duplicate = False
@@ -331,12 +427,14 @@ class PromptServer():
 
         @routes.post("/upload/image")
         async def upload_image(request):
+            """Handle image upload endpoint"""
             post = await request.post()
             return image_upload(post)
 
 
         @routes.post("/upload/mask")
         async def upload_mask(request):
+            """Handle mask upload endpoint"""
             post = await request.post()
 
             def image_save_function(image, post, filepath):
@@ -380,6 +478,7 @@ class PromptServer():
 
         @routes.get("/view")
         async def view_image(request):
+            """Handle image view endpoint"""
             if "filename" in request.rel_url.query:
                 filename = request.rel_url.query["filename"]
                 filename,output_dir = folder_paths.annotated_filepath(filename)
@@ -482,6 +581,7 @@ class PromptServer():
 
         @routes.get("/view_metadata/{folder_name}")
         async def view_metadata(request):
+            """Get metadata for model file"""
             folder_name = request.match_info.get("folder_name", None)
             if folder_name is None:
                 return web.Response(status=404)
@@ -505,6 +605,7 @@ class PromptServer():
 
         @routes.get("/system_stats")
         async def system_stats(request):
+            """Get system stats including RAM and VRAM usage"""
             device = comfy.model_management.get_torch_device()
             device_name = comfy.model_management.get_torch_device_name(device)
             cpu_device = comfy.model_management.torch.device("cpu")
@@ -540,9 +641,11 @@ class PromptServer():
 
         @routes.get("/prompt")
         async def get_prompt(request):
+            """Get current prompt queue info"""
             return web.json_response(self.get_queue_info())
 
         def node_info(node_class):
+            """Get info about a node class"""
             obj_class = nodes.NODE_CLASS_MAPPINGS[node_class]
             info = {}
             info['input'] = obj_class.INPUT_TYPES()
@@ -574,6 +677,7 @@ class PromptServer():
 
         @routes.get("/object_info")
         async def get_object_info(request):
+            """Get info about all available nodes"""
             with folder_paths.cache_helper:
                 out = {}
                 for x in nodes.NODE_CLASS_MAPPINGS:
@@ -586,6 +690,7 @@ class PromptServer():
 
         @routes.get("/object_info/{node_class}")
         async def get_object_info_node(request):
+            """Get info about a specific node"""
             node_class = request.match_info.get("node_class", None)
             out = {}
             if (node_class is not None) and (node_class in nodes.NODE_CLASS_MAPPINGS):
@@ -594,6 +699,7 @@ class PromptServer():
 
         @routes.get("/history")
         async def get_history(request):
+            """Get execution history"""
             max_items = request.rel_url.query.get("max_items", None)
             if max_items is not None:
                 max_items = int(max_items)
@@ -601,11 +707,13 @@ class PromptServer():
 
         @routes.get("/history/{prompt_id}")
         async def get_history_prompt_id(request):
+            """Get history for specific prompt"""
             prompt_id = request.match_info.get("prompt_id", None)
             return web.json_response(self.prompt_queue.get_history(prompt_id=prompt_id))
 
         @routes.get("/queue")
         async def get_queue(request):
+            """Get current queue status"""
             queue_info = {}
             current_queue = self.prompt_queue.get_current_queue()
             queue_info['queue_running'] = current_queue[0]
@@ -614,9 +722,13 @@ class PromptServer():
 
         @routes.post("/prompt")
         async def post_prompt(request):
+            """Submit new prompt for execution"""
             logging.info("got prompt")
-            json_data =  await request.json()
+            json_data = await request.json()
+            logging.info("2. Parsed JSON data from request")
+            
             json_data = self.trigger_on_prompt(json_data)
+            logging.info("3. Triggered on_prompt handlers")
 
             if "number" in json_data:
                 number = float(json_data['number'])
@@ -625,28 +737,49 @@ class PromptServer():
                 if "front" in json_data:
                     if json_data['front']:
                         number = -number
-
                 self.number += 1
+            logging.info(f"4. Assigned execution number: {number}")
 
             if "prompt" in json_data:
                 prompt = json_data["prompt"]
+                logging.info("5. Validating prompt structure")
                 valid = execution.validate_prompt(prompt)
                 extra_data = {}
                 if "extra_data" in json_data:
                     extra_data = json_data["extra_data"]
+                    logging.info(f"6. Found extra data: {extra_data}")
 
                 if "client_id" in json_data:
                     extra_data["client_id"] = json_data["client_id"]
+                    logging.info(f"7. Using client_id: {json_data['client_id']}")
+
                 if valid[0]:
+                    logging.info("8. Prompt validation successful")
                     prompt_id = str(uuid.uuid4())
                     outputs_to_execute = valid[2]
+                    logging.info(f"9. Generated prompt_id: {prompt_id}")
+                    
+                    # Use distributed execution if available
+                    # try:
+                    #     if len(self.distributed_manager.worker_instances) > 0:
+                    #         logging.info("10a. Attempting distributed execution")
+                    #         result = await self.distributed_manager.execute_workflow(prompt, extra_data.get("client_id", ""))
+                    #         logging.info(f"11a. Distributed execution initiated with result: {result}")
+                    #         return web.json_response({"prompt_id": result["prompt"]["prompt_id"], "number": number, "node_errors": valid[3]})
+                    # except Exception as e:
+                    #     logging.error(f"12a. Distributed execution failed: {e}, falling back to local execution")
+                    
+                    # Fallback to local execution
+                    logging.info("10b. Queueing prompt for local execution")
                     self.prompt_queue.put((number, prompt_id, prompt, extra_data, outputs_to_execute))
+                    logging.info("11b. Successfully queued prompt")
                     response = {"prompt_id": prompt_id, "number": number, "node_errors": valid[3]}
                     return web.json_response(response)
                 else:
-                    logging.warning("invalid prompt: {}".format(valid[1]))
+                    logging.warning(f"8x. Invalid prompt: {valid[1]}")
                     return web.json_response({"error": valid[1], "node_errors": valid[3]}, status=400)
             else:
+                logging.warning("5x. No prompt found in request")
                 return web.json_response({"error": "no prompt", "node_errors": []}, status=400)
 
         @routes.post("/queue")
@@ -691,6 +824,46 @@ class PromptServer():
                     self.prompt_queue.delete_history_item(id_to_delete)
 
             return web.Response(status=200)
+
+        @routes.post("/distributed/add_worker")
+        async def add_worker(request):
+            try:
+                data = await request.json()
+                host = data.get("host", "localhost")
+                port = data.get("port")
+                if not port:
+                    return web.Response(status=400, text="Port is required")
+                worker_id = self.distributed_manager.add_worker(host, port)
+                return web.json_response({"worker_id": worker_id})
+            except Exception as e:
+                return web.Response(status=500, text=str(e))
+
+        @routes.post("/distributed/remove_worker")
+        async def remove_worker(request):
+            try:
+                data = await request.json()
+                worker_id = data.get("worker_id")
+                if not worker_id:
+                    return web.Response(status=400, text="Worker ID is required")
+                self.distributed_manager.remove_worker(worker_id)
+                return web.Response(status=200)
+            except Exception as e:
+                return web.Response(status=500, text=str(e))
+
+        @routes.get("/distributed/workers")
+        async def get_workers(request):
+            try:
+                workers = []
+                for worker_id, worker in self.distributed_manager.worker_instances.items():
+                    workers.append({
+                        "worker_id": worker_id,
+                        "host": worker.host,
+                        "port": worker.port,
+                        "status": worker.status
+                    })
+                return web.json_response(workers)
+            except Exception as e:
+                return web.Response(status=500, text=str(e))
 
     async def setup(self):
         timeout = aiohttp.ClientTimeout(total=None) # no timeout
