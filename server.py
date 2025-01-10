@@ -865,6 +865,113 @@ class PromptServer():
             except Exception as e:
                 return web.Response(status=500, text=str(e))
 
+        @routes.post("/distributed/execute_node")
+        async def execute_node(request):
+            """Execute a single node on this instance"""
+            print("received a request to execute from.")
+            try:
+                data = await request.json()
+                node_data = data.get("node_data")
+                print("node_data::", node_data)
+                if not node_data:
+                    return web.Response(status=400, text="Node data is required")
+                
+                # Create a minimal prompt with just this node
+                prompt = {
+                    node_data["id"]: {
+                        "class_type": node_data["class_type"],
+                        "inputs": node_data["inputs"]
+                    }
+                }
+                
+                # Execute the node
+                prompt_id = str(uuid.uuid4())
+                self.prompt_queue.put((0, prompt_id, prompt, {}, [node_data["id"]]))
+                
+                print("prompt id::", prompt_id)
+                print("*"*20)
+
+                return web.json_response({
+                    "prompt_id": prompt_id,
+                    "status": "queued"
+                })
+            except Exception as e:
+                return web.Response(status=500, text=str(e))
+
+        @routes.get("/distributed/node_status/{prompt_id}")
+        async def get_node_status(request):
+            """Get status of a node execution"""
+            prompt_id = request.match_info.get("prompt_id")
+            if not prompt_id:
+                return web.Response(status=400, text="Prompt ID is required")
+                
+            history = server.prompt_queue.get_history(prompt_id=prompt_id)
+            if not history:
+                return web.json_response({
+                    "status": "pending"
+                })
+                
+            return web.json_response({
+                "status": "completed",
+                "result": history[prompt_id]
+            })
+
+        @routes.get("/distributed/node_output/{node_id}")
+        async def get_node_output(request):
+            """Get output data for a specific node"""
+            node_id = request.match_info.get("node_id")
+            if not node_id:
+                return web.Response(status=400, text="Node ID is required")
+
+            try:
+                # Get the output from the executor's cache
+                if not hasattr(self, 'executor'):
+                    return web.json_response({
+                        "status": "error",
+                        "error": "No executor available - server might be initializing"
+                    })
+
+                outputs = self.executor.caches.outputs
+                output_data = outputs.get(node_id)
+                
+                if output_data is None:
+                    return web.json_response({
+                        "status": "not_found",
+                        "message": f"No output found for node {node_id}"
+                    })
+
+                # Convert any non-serializable data to a serializable format
+                def make_serializable(obj):
+                    if isinstance(obj, (int, float, str, bool, list, dict)):
+                        return obj
+                    if isinstance(obj, tuple):
+                        return list(obj)
+                    if hasattr(obj, 'tolist'):  # For numpy arrays and tensors
+                        return obj.tolist()
+                    return str(obj)
+
+                # Convert output data to serializable format
+                serializable_output = []
+                for output in output_data:
+                    if isinstance(output, (list, tuple)):
+                        serializable_output.append([make_serializable(x) for x in output])
+                    else:
+                        serializable_output.append(make_serializable(output))
+
+                return web.json_response({
+                    "status": "success",
+                    "node_id": node_id,
+                    "output_data": serializable_output
+                })
+
+            except Exception as e:
+                logging.error(f"Error getting node output: {str(e)}")
+                logging.error(traceback.format_exc())
+                return web.json_response({
+                    "status": "error",
+                    "error": str(e)
+                }, status=500)
+
     async def setup(self):
         timeout = aiohttp.ClientTimeout(total=None) # no timeout
         self.client_session = aiohttp.ClientSession(timeout=timeout)

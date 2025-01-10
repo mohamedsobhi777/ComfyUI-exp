@@ -2,3 +2,16 @@
 env
 /env
 /env/*
+
+env11
+/env11
+/env11/*
+
+
+web
+/web
+/web/*
+
+output
+input
+models

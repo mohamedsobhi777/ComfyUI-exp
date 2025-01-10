@@ -29,3 +29,9 @@ env
 ./env
 
 /env/*
+
+
+env11
+/env11
+.env11
+./env11/*

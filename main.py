@@ -172,6 +172,8 @@ def prompt_worker(q, server_instance):
     """Main worker function that processes prompts from the queue"""
     current_time: float = 0.0
     e = execution.PromptExecutor(server_instance, lru_size=args.cache_lru)
+    # Store executor reference in server
+    server_instance.executor = e # GUO1
     last_gc_collect = 0
     need_gc = False
     gc_collect_interval = 10.0
@@ -190,7 +192,7 @@ def prompt_worker(q, server_instance):
             execution_start_time = time.perf_counter()
             prompt_id = item[1]
             server_instance.last_prompt_id = prompt_id
-
+            print("worker is executing something::", item_id, ", prompt_id::", prompt_id)
             # Execute the prompt
             e.execute(item[2], prompt_id, item[3], item[4])
             need_gc = True
