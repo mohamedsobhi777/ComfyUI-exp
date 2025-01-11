@@ -431,7 +431,6 @@ class PromptServer():
             post = await request.post()
             return image_upload(post)
 
-
         @routes.post("/upload/mask")
         async def upload_mask(request):
             """Handle mask upload endpoint"""
@@ -940,23 +939,13 @@ class PromptServer():
                         "message": f"No output found for node {node_id}"
                     })
 
-                # Convert any non-serializable data to a serializable format
-                def make_serializable(obj):
-                    if isinstance(obj, (int, float, str, bool, list, dict)):
-                        return obj
-                    if isinstance(obj, tuple):
-                        return list(obj)
-                    if hasattr(obj, 'tolist'):  # For numpy arrays and tensors
-                        return obj.tolist()
-                    return str(obj)
-
                 # Convert output data to serializable format
                 serializable_output = []
                 for output in output_data:
                     if isinstance(output, (list, tuple)):
-                        serializable_output.append([make_serializable(x) for x in output])
+                        serializable_output.append([self.serialize_output(x) for x in output])
                     else:
-                        serializable_output.append(make_serializable(output))
+                        serializable_output.append(self.serialize_output(output))
 
                 return web.json_response({
                     "status": "success",
@@ -971,6 +960,83 @@ class PromptServer():
                     "status": "error",
                     "error": str(e)
                 }, status=500)
+
+    def serialize_output(self, obj):
+        """Serialize different types of node outputs"""
+        import torch
+        import numpy as np
+        from PIL import Image
+        import base64
+        import io
+
+        # Handle basic types
+        if isinstance(obj, (int, float, str, bool)):
+            return {
+                "type": type(obj).__name__,
+                "value": obj
+            }
+
+        # Handle PIL Images
+        elif isinstance(obj, Image.Image):
+            buffered = io.BytesIO()
+            obj.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return {
+                "type": "PIL.Image",
+                "value": img_str,
+                "mode": obj.mode,
+                "size": obj.size
+            }
+
+        # Handle Torch Tensors (including latents)
+        elif isinstance(obj, torch.Tensor):
+            # Convert to numpy first
+            if obj.is_cuda:
+                obj = obj.cpu()
+            np_array = obj.numpy()
+            # Use numpy serialization
+            buffer = io.BytesIO()
+            np.save(buffer, np_array)
+            tensor_data = base64.b64encode(buffer.getvalue()).decode()
+            return {
+                "type": "torch.Tensor",
+                "value": tensor_data,
+                "shape": list(obj.shape),
+                "dtype": str(obj.dtype)
+            }
+
+        # Handle numpy arrays
+        elif isinstance(obj, np.ndarray):
+            buffer = io.BytesIO()
+            np.save(buffer, obj)
+            array_data = base64.b64encode(buffer.getvalue()).decode()
+            return {
+                "type": "numpy.ndarray",
+                "value": array_data,
+                "shape": list(obj.shape),
+                "dtype": str(obj.dtype)
+            }
+
+        # Handle dictionaries
+        elif isinstance(obj, dict):
+            return {
+                "type": "dict",
+                "value": {k: self.serialize_output(v) for k, v in obj.items()}
+            }
+
+        # Handle lists and tuples
+        elif isinstance(obj, (list, tuple)):
+            return {
+                "type": type(obj).__name__,
+                "value": [self.serialize_output(x) for x in obj]
+            }
+
+        # Fallback for other types
+        else:
+            return {
+                "type": "str",
+                "value": str(obj)
+            }
 
     async def setup(self):
         timeout = aiohttp.ClientTimeout(total=None) # no timeout

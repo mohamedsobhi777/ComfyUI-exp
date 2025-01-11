@@ -93,17 +93,38 @@ class CacheKeySetInputSignature(CacheKeySet):
             self.subcache_keys[node_id] = (node_id, node["class_type"])
 
     def get_node_signature(self, dynprompt, node_id):
+        return node_id
+        print("="*50)
+        print(f"Getting node signature for node {node_id}")
         signature = []
+        
         ancestors, order_mapping = self.get_ordered_ancestry(dynprompt, node_id)
+        print(f"Found {len(ancestors)} ancestors: {ancestors}")
+        print(f"Ancestor order mapping: {order_mapping}")
+        
+        print(f"\nGetting immediate signature for main node {node_id}")
         signature.append(self.get_immediate_node_signature(dynprompt, node_id, order_mapping))
-        for ancestor_id in ancestors:
-            signature.append(self.get_immediate_node_signature(dynprompt, ancestor_id, order_mapping))
-        return to_hashable(signature)
+        
+        print("\nGetting signatures for ancestors:")
+        for ancestor_id in ancestors: 
+            break
+            print(f"\nProcessing ancestor {ancestor_id}")
+            ancestor_sig = self.get_immediate_node_signature(dynprompt, ancestor_id, order_mapping)
+            signature.append(ancestor_sig)
+            print(f"Added ancestor signature: {ancestor_sig}")
+
+        print("\nFinal signature before hashing:", signature)
+        hashable_res = to_hashable(signature)
+        print("Final hashable result:", hashable_res)
+        print("="*50)
+        return hashable_res
 
     def get_immediate_node_signature(self, dynprompt, node_id, ancestor_order_mapping):
+        return node_id
         if not dynprompt.has_node(node_id):
             # This node doesn't exist -- we can't cache it.
             return [float("NaN")]
+        print("getting node immediate signature::", node_id)
         node = dynprompt.get_node(node_id)
         class_type = node["class_type"]
         class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
@@ -118,6 +139,8 @@ class CacheKeySetInputSignature(CacheKeySet):
                 signature.append((key,("ANCESTOR", ancestor_index, ancestor_socket)))
             else:
                 signature.append((key, inputs[key]))
+
+        print("res immediate signature::", signature)
         return signature
 
     # This function returns a list of all ancestors of the given node. The order of the list is
@@ -151,6 +174,7 @@ class BasicCache:
         self.subcaches = {}
 
     def set_prompt(self, dynprompt, node_ids, is_changed_cache):
+        print("BasicCache set_prompt()")
         self.dynprompt = dynprompt
         self.cache_key_set = self.key_class(dynprompt, node_ids, is_changed_cache)
         self.is_changed_cache = is_changed_cache
@@ -164,6 +188,7 @@ class BasicCache:
         return node_ids
 
     def _clean_cache(self):
+        return 
         preserve_keys = set(self.cache_key_set.get_used_keys())
         to_remove = []
         for key in self.cache:
@@ -173,6 +198,7 @@ class BasicCache:
             del self.cache[key]
 
     def _clean_subcaches(self):
+        return 
         preserve_subcaches = set(self.cache_key_set.get_used_subcache_keys())
 
         to_remove = []
@@ -183,6 +209,7 @@ class BasicCache:
             del self.subcaches[key]
 
     def clean_unused(self):
+        return 
         assert self.initialized
         self._clean_cache()
         self._clean_subcaches()
@@ -193,12 +220,21 @@ class BasicCache:
         self.cache[cache_key] = value
 
     def _get_immediate(self, node_id):
+        print("getting immediate...")
         if not self.initialized:
             return None
-        cache_key = self.cache_key_set.get_data_key(node_id)
+
+        print("brute print cache:", self.cache)
+
+        # cache_key = self.cache_key_set.get_data_key(node_id) #GUO1
+        cache_key = node_id
+        print("data key:", cache_key)
+
         if cache_key in self.cache:
+            print("found keyo")
             return self.cache[cache_key]
         else:
+            print("found not None")
             return None
 
     def _ensure_subcache(self, node_id, children_ids):
@@ -249,9 +285,13 @@ class HierarchicalCache(BasicCache):
         return cache
 
     def get(self, node_id):
+        print(f"HierarchicalCache: Getting value for node {node_id}")
         cache = self._get_cache_for(node_id)
         if cache is None:
+            print(f"HierarchicalCache: No cache found for node {node_id}")
             return None
+        print(f"HierarchicalCache: Found cache for node {node_id}, retrieving value")
+        print("here the cache is:::", cache.__dict__)
         return cache._get_immediate(node_id)
 
     def set(self, node_id, value):
@@ -274,24 +314,42 @@ class LRUCache(BasicCache):
         self.children = {}
 
     def set_prompt(self, dynprompt, node_ids, is_changed_cache):
+        print(f"Setting prompt for LRUCache with {len(node_ids)} nodes")
         super().set_prompt(dynprompt, node_ids, is_changed_cache)
         self.generation += 1
+        print(f"Incremented generation to {self.generation}")
         for node_id in node_ids:
+            print(f"Marking node {node_id} as used in generation {self.generation}")
             self._mark_used(node_id)
 
     def clean_unused(self):
+        return 
+        print(f"Cleaning unused cache entries. Current size: {len(self.cache)}, Max size: {self.max_size}")
+        print(f"Current generation: {self.generation}, Min generation: {self.min_generation}")
+        
         while len(self.cache) > self.max_size and self.min_generation < self.generation:
             self.min_generation += 1
+            print(f"Incrementing min_generation to {self.min_generation}")
+            
             to_remove = [key for key in self.cache if self.used_generation[key] < self.min_generation]
+            print(f"Found {len(to_remove)} entries to remove from generation < {self.min_generation}")
+            
             for key in to_remove:
+                print(f"Removing cache entry with key {key}")
                 del self.cache[key]
                 del self.used_generation[key]
                 if key in self.children:
+                    print(f"Removing children entries for key {key}")
                     del self.children[key]
+                    
+        print("Cleaning subcaches")
         self._clean_subcaches()
+        print(f"Cache cleaning complete. New size: {len(self.cache)}")
 
     def get(self, node_id):
+        print("getting...")
         self._mark_used(node_id)
+        
         return self._get_immediate(node_id)
 
     def _mark_used(self, node_id):

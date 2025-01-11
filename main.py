@@ -193,6 +193,14 @@ def prompt_worker(q, server_instance):
             prompt_id = item[1]
             server_instance.last_prompt_id = prompt_id
             print("worker is executing something::", item_id, ", prompt_id::", prompt_id)
+            print("gotten item::[0]", item[0])
+            print("gotten item::[1]", item[1])
+            print("gotten item::[2]", item[2])
+            print("gotten item::[3]", item[3])
+            print("gotten item::[4]", item[4])
+
+            print("but this is the pre-cache::", e.caches.recursive_debug_dump())
+
             # Execute the prompt
             e.execute(item[2], prompt_id, item[3], item[4])
             need_gc = True
