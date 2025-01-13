@@ -491,6 +491,17 @@ def format_value(x):
     else:
         return str(x)
 
+
+execution_machine = {
+    "21": "8288",
+    "20": "8288",
+    "19": "8288",
+    "22": "8288",
+    "16": "8288",
+    "17": "8288",
+    "18": "8188"
+}
+
 def execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results):
     unique_id = current_item
     real_node_id = dynprompt.get_real_node_id(unique_id)
@@ -499,6 +510,11 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
     inputs = dynprompt.get_node(unique_id)['inputs']
     class_type = dynprompt.get_node(unique_id)['class_type']
     class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
+
+    print("this is the server port yo::", server.port)
+
+
+
 
     # # Check if this node should be executed on a remote worker
     # if hasattr(class_def, 'EXECUTION_TARGET') and class_def.EXECUTION_TARGET != 'local':
@@ -880,24 +896,24 @@ class PromptExecutor:
             # print("dynamic prompt:::", dynamic_prompt)
             for cache in self.caches.all:
                 # cache.set_prompt(dynamic_prompt, prompt.keys(), is_changed_cache)
-                cache.set_prompt(dynamic_prompt, ["21", "19"], is_changed_cache)
+                cache.set_prompt(dynamic_prompt, ["21", "19", "20", "22", "16", "17", "18"], is_changed_cache)
                 # cache.clean_unused()
 
-            print("outputs cache after block::", self.caches.outputs.all_node_ids())
+            # print("outputs cache after block::", self.caches.outputs.all_node_ids())
         
-            print("cache dump::")
-            print(self.caches.recursive_debug_dump())
-            print("done with cache dump")
+            # print("cache dump::")
+            # print(self.caches.recursive_debug_dump())
+            # print("done with cache dump")
 
-            if execute_outputs[0] == "19":
-                print("21--", self.caches.outputs.get("21"))
+            # if execute_outputs[0] == "19":
+            #     print("21--", self.caches.outputs.get("21"))
 
             cached_nodes = []
             for node_id in prompt:
                 if self.caches.outputs.get(node_id) is not None:
                     cached_nodes.append(node_id)
 
-            print("all cached nodes::", cached_nodes)
+            # print("all cached nodes::", cached_nodes)
 
             logging.info(f"Found {len(cached_nodes)} cached nodes")
             comfy.model_management.cleanup_models_gc()
@@ -913,8 +929,8 @@ class PromptExecutor:
 
             current_outputs = self.caches.outputs.all_node_ids()
 
-            for one_cached_output in current_outputs:
-                print(f"cached for {one_cached_output} = {self.caches.outputs.get(one_cached_output)}")
+            # for one_cached_output in current_outputs:
+            #     print(f"cached for {one_cached_output} = {self.caches.outputs.get(one_cached_output)}")
 
             # for node_id in list(execute_outputs):
             #     print("node from execution list (initial):::", node_id)
@@ -927,7 +943,7 @@ class PromptExecutor:
             # Short Circuit
             result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
             self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
-            print("done yalla")
+            # print("done yalla")
 
             # while not execution_list.is_empty():
             #     node_id, error, ex = execution_list.stage_node_execution()
