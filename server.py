@@ -746,7 +746,7 @@ class PromptServer():
                 extra_data = {}
                 if "extra_data" in json_data:
                     extra_data = json_data["extra_data"]
-                    logging.info(f"6. Found extra data: {extra_data}")
+                    # logging.info(f"6. Found extra data: {extra_data}")
 
                 if "client_id" in json_data:
                     extra_data["client_id"] = json_data["client_id"]
@@ -904,7 +904,7 @@ class PromptServer():
             if not prompt_id:
                 return web.Response(status=400, text="Prompt ID is required")
                 
-            history = server.prompt_queue.get_history(prompt_id=prompt_id)
+            history = self.prompt_queue.get_history(prompt_id=prompt_id)
             if not history:
                 return web.json_response({
                     "status": "pending"

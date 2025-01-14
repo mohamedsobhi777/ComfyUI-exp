@@ -113,6 +113,26 @@ from comfy_execution.graph_utils import is_link, GraphBuilder
 from comfy_execution.caching import HierarchicalCache, LRUCache, CacheKeySetInputSignature, CacheKeySetID
 from comfy_execution.validation import validate_node_input
 
+
+execution_machine = {
+    "4": "localhost:8188",
+    "6": "localhost:8188",
+    "7": "localhost:8188",
+
+    "3": "localhost:8188",
+    "5": "localhost:8288",
+    "8": "localhost:8188",
+    "9": "localhost:8288",
+
+
+
+    "10": "localhost:8288",
+    "11": "localhost:8288",
+    "12": "localhost:8288",
+    "14": "localhost:8288",
+    "15": "localhost:8288"
+}
+
 class ExecutionResult(Enum):
     SUCCESS = 0
     FAILURE = 1
@@ -227,32 +247,33 @@ def deserialize_output(data):
     else:
         return value
 
-async def get_remote_node_output(server, node_id, worker_port):
+def get_remote_node_output(node_id, node_execution_machine):
     """Fetch node output from a remote worker"""
     # Find worker with matching port
-    worker = None
-    for worker_id, w in server.distributed_manager.worker_instances.items():
-        if w.port == worker_port:
-            worker = w
-            break
+    # worker = None
+    # for worker_id, w in server.distributed_manager.worker_instances.items():
+    #     if w.port == worker_port:
+    #         worker = w
+    #         break
             
-    if not worker:
-        raise Exception(f"No worker found for port {worker_port}")
+    # if not worker:
+    #     raise Exception(f"No worker found for port {worker_port}")
         
     try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{worker.base_url}/distributed/node_output/{node_id}"
-            async with session.get(url) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    if result["status"] == "success":
-                        # Deserialize the output data
-                        output_data = [deserialize_output(x) for x in result["output_data"]]
-                        return output_data
-                    else:
-                        raise Exception(f"Error getting remote output: {result.get('error', 'Unknown error')}")
-                else:
-                    raise Exception(f"Failed to get remote output, status: {response.status}")
+        import requests
+        url = f"http://{node_execution_machine}/distributed/node_output/{node_id}"
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result["status"] == "success":
+                # Deserialize the output data
+                output_data = [deserialize_output(x) for x in result["output_data"][0]]
+                return output_data
+            else:
+                raise Exception(f"Error getting remote output: {result.get('error', 'Unknown error')}")
+        else:
+            raise Exception(f"Failed to get remote output, status: {response.status_code}")
     except Exception as e:
         logging.error(f"Error fetching remote node output: {e}")
         raise
@@ -260,11 +281,11 @@ async def get_remote_node_output(server, node_id, worker_port):
 def get_input_data(inputs, class_def, unique_id, outputs=None, dynprompt=None, extra_data={}):
     print("<"*50)
     print(f"\nGetting input data for node {unique_id} of type {class_def.__name__}")
-    print("outputs:.:", outputs.all_node_ids())
-    if outputs:
-        print("while having outputs::", outputs.all_node_ids())
-        for node_id_debug in outputs.all_node_ids():
-            print(f"{node_id_debug}={outputs.get(node_id_debug)}")        
+    # print("outputs:.:", outputs.all_node_ids())
+    # if outputs:
+    #     print("while having outputs::", outputs.all_node_ids())
+    #     for node_id_debug in outputs.all_node_ids():
+    #         print(f"{node_id_debug}={outputs.get(node_id_debug)}")        
     
     valid_inputs = class_def.INPUT_TYPES()
     print(f"Valid input types: {valid_inputs}")
@@ -292,17 +313,32 @@ def get_input_data(inputs, class_def, unique_id, outputs=None, dynprompt=None, e
             output_index = input_data[1]
             print(f"Link points to node {input_unique_id} output {output_index}")
             
+
+            node_execution_machine = execution_machine[input_unique_id]
+            print("node_execution_machine::", node_execution_machine)
+
+
+            
+            host_machine = extra_data.get("host_machine", None)
+            if node_execution_machine != host_machine:
+                # fetch from remote machine
+                print("this is the node_execution_machine::", node_execution_machine)
+                output_data = get_remote_node_output(
+                    input_unique_id, 
+                    node_execution_machine
+                )
+                print("this is the output_data::", output_data)
+                input_data_all[x] = output_data
+                continue
+                
             if outputs is None:
                 print("No outputs cache provided, marking as missing")
                 mark_missing()
                 continue # This might be a lazily-evaluated input
                 
-
-
-
-
-
                 
+                
+
             # # Check if input node is on a remote worker
             # input_node = dynprompt.get_node(input_unique_id)
             # input_class = nodes.NODE_CLASS_MAPPINGS[input_node["class_type"]]
@@ -492,15 +528,7 @@ def format_value(x):
         return str(x)
 
 
-execution_machine = {
-    "21": "8288",
-    "20": "8288",
-    "19": "8288",
-    "22": "8288",
-    "16": "8288",
-    "17": "8288",
-    "18": "8188"
-}
+
 
 def execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results):
     unique_id = current_item
@@ -512,78 +540,26 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
     class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
 
     print("this is the server port yo::", server.port)
-
-
-
-
-    # # Check if this node should be executed on a remote worker
-    # if hasattr(class_def, 'EXECUTION_TARGET') and class_def.EXECUTION_TARGET != 'local':
-    #     print("execution remotely on ::", class_def.EXECUTION_TARGET)
-    #     try:
-    #         # Get worker for target
-    #         target = class_def.EXECUTION_TARGET
-    #         worker = None
-    #         for worker_id, w in server.distributed_manager.worker_instances.items():
-    #             if w.port == int(target):
-    #                 worker = w
-    #                 break
-                    
-    #         if not worker:
-    #             raise Exception(f"No worker found for target {target}")
-                
-    #         # Execute node on remote worker
-    #         node_data = {
-    #             "id": unique_id,
-    #             "class_type": class_type,
-    #             "inputs": inputs
-    #         }
-            
-    #         result = worker.execute_node(node_data)
-    #         if result.get("status") == "success":
-    #             output_data = result["output"]
-    #             caches.outputs.set(unique_id, output_data)
-    #             executed.add(unique_id)
-    #             return (ExecutionResult.SUCCESS, None, None)
-    #         else:
-    #             error = {
-    #                 "node_id": real_node_id,
-    #                 "exception_message": result.get("error", "Unknown error"),
-    #                 "exception_type": "RemoteExecutionError",
-    #                 "traceback": [],
-    #                 "current_inputs": {}
-    #             }
-    #             return (ExecutionResult.FAILURE, error, Exception(result.get("error")))
-                
-    #     except Exception as ex:
-    #         error = {
-    #             "node_id": real_node_id,
-    #             "exception_message": str(ex),
-    #             "exception_type": "RemoteExecutionError", 
-    #             "traceback": traceback.format_exc(),
-    #             "current_inputs": {}
-    #         }
-    #         return (ExecutionResult.FAILURE, error, ex)
-
     # Continue with local execution
     print(f"\n=== Starting local execution for node {unique_id} ===")
     
     if caches.outputs.get(unique_id) is not None:
         print(f"Node {unique_id} found in cache")
         if server.client_id is not None:
-            print(f"Sending cached output to client {server.client_id}")
+            # print(f"Sending cached output to client {server.client_id}")
             cached_output = caches.ui.get(unique_id) or {}
             server.send_sync("executed", { "node": unique_id, "display_node": display_node_id, "output": cached_output.get("output",None), "prompt_id": prompt_id }, server.client_id)
         return (ExecutionResult.SUCCESS, None, None)
 
-    print(f"Node {unique_id} not in cache, executing...")
+    # print(f"Node {unique_id} not in cache, executing...")
     input_data_all = None
     try:
         if unique_id in pending_subgraph_results:
-            print(f"Found pending subgraph results for node {unique_id}")
+            # print(f"Found pending subgraph results for node {unique_id}")
             cached_results = pending_subgraph_results[unique_id]
             resolved_outputs = []
             for is_subgraph, result in cached_results:
-                print(f"Processing result - is_subgraph: {is_subgraph}")
+                # print(f"Processing result - is_subgraph: {is_subgraph}")
                 if not is_subgraph:
                     resolved_outputs.append(result)
                 else:
@@ -600,22 +576,25 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
                         else:
                             resolved_output.append(r)
                     resolved_outputs.append(tuple(resolved_output))
-            print("Merging resolved outputs...")
+            # print("Merging resolved outputs...")
             output_data = merge_result_data(resolved_outputs, class_def)
             output_ui = []
             has_subgraph = False
         else:
-            print("Getting input data...")
+            # print("Getting input data...")
+
+            if extra_data is None: extra_data = {}
+            extra_data["host_machine"] = f"localhost:{server.port}"
             input_data_all, missing_keys = get_input_data(inputs, class_def, unique_id, caches.outputs, dynprompt, extra_data)
-            print(f"Input data: {input_data_all}")
-            print(f"Missing keys: {missing_keys}")
+            # print(f"Input data: {input_data_all}")
+            # print(f"Missing keys: {missing_keys}")
             
             if server.client_id is not None:
                 print(f"Notifying client {server.client_id} of execution")
                 server.last_node_id = display_node_id
                 server.send_sync("executing", { "node": unique_id, "display_node": display_node_id, "prompt_id": prompt_id }, server.client_id)
 
-            print("Getting/creating node object...")
+            # print("Getting/creating node object...")
             obj = caches.objects.get(unique_id)
             if obj is None:
                 print("Creating new node object")
@@ -659,7 +638,7 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
                 print(f"Pre-execute callback for index {call_index}")
                 GraphBuilder.set_default_prefix(unique_id, call_index, 0)
 
-            print("Getting output data...")
+            # print("Getting output data...")
             output_data, output_ui, has_subgraph = get_output_data(obj, input_data_all, execution_block_cb=execution_block_cb, pre_execute_cb=pre_execute_cb)
             print(f"Got output data, has_subgraph: {has_subgraph}")
 
@@ -679,7 +658,7 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
                 server.send_sync("executed", { "node": unique_id, "display_node": display_node_id, "output": output_ui, "prompt_id": prompt_id }, server.client_id)
 
         if has_subgraph:
-            print("Processing subgraph...")
+            # print("Processing subgraph...")
             cached_outputs = []
             new_node_ids = []
             new_output_ids = []
@@ -712,19 +691,19 @@ def execute(server, dynprompt, caches, current_item, extra_data, executed, promp
                             new_output_links.append((from_node_id, from_socket))
                     cached_outputs.append((True, node_outputs))
             new_node_ids = set(new_node_ids)
-            print("Updating caches for new nodes...")
+            # print("Updating caches for new nodes...")
             for cache in caches.all:
                 cache.ensure_subcache_for(unique_id, new_node_ids).clean_unused()
             for node_id in new_output_ids:
-                print(f"Adding output node {node_id} to execution list")
+                # print(f"Adding output node {node_id} to execution list")
                 execution_list.add_node(node_id)
             for link in new_output_links:
-                print(f"Adding strong link {link[0]}:{link[1]} -> {unique_id}")
+                # print(f"Adding strong link {link[0]}:{link[1]} -> {unique_id}")
                 execution_list.add_strong_link(link[0], link[1], unique_id)
             pending_subgraph_results[unique_id] = cached_outputs
             return (ExecutionResult.PENDING, None, None)
 
-        print("Setting output cache...")
+        # print("Setting output cache...")
         caches.outputs.set(unique_id, output_data)
 
     except comfy.model_management.InterruptProcessingException as iex:
@@ -826,9 +805,6 @@ class PromptExecutor:
     # takes entire prompt/workflow
     def execute(self, prompt, prompt_id, extra_data={}, execute_outputs=[]):
 
-
-
-
         logging.info(f"Starting execution of prompt {prompt_id}")
         nodes.interrupt_processing(False)
 
@@ -842,20 +818,20 @@ class PromptExecutor:
         #     print("all cached nodes(initial)::", cached_nodes)
 
 
-        print("execute workflow in execution.py::")
-        print("prompt::", prompt)
-        print("")
+        # print("execute workflow in execution.py::")
+        # print("prompt::", prompt)
+        # print("")
         print("prompt_id::", prompt_id)
-        print("")
-        print("extra_data::", extra_data)
-        print("")
-        print("execute_outputs::", execute_outputs)
-        print("")
+        # print("")
+        # print("extra_data::", extra_data)
+        # print("")
+        # print("execute_outputs::", execute_outputs)
+        # print("")
 
 
         if "client_id" in extra_data:
             self.server.client_id = extra_data["client_id"]
-            print(f"Using client_id: {extra_data['client_id']}")
+            # print(f"Using client_id: {extra_data['client_id']}")
         else:
             self.server.client_id = None
 
@@ -895,8 +871,8 @@ class PromptExecutor:
             # # Disable this for now (GUO1)
             # print("dynamic prompt:::", dynamic_prompt)
             for cache in self.caches.all:
-                # cache.set_prompt(dynamic_prompt, prompt.keys(), is_changed_cache)
-                cache.set_prompt(dynamic_prompt, ["21", "19", "20", "22", "16", "17", "18"], is_changed_cache)
+                cache.set_prompt(dynamic_prompt, prompt.keys(), is_changed_cache)
+                # cache.set_prompt(dynamic_prompt, ["21", "19", "20", "22", "16", "17", "18"], is_changed_cache)
                 # cache.clean_unused()
 
             # print("outputs cache after block::", self.caches.outputs.all_node_ids())
@@ -927,170 +903,214 @@ class PromptExecutor:
             print(f"execute outputs::", execute_outputs)
             # logging.info(f"ExecutionList::", execution_list)
 
-            current_outputs = self.caches.outputs.all_node_ids()
+            if self.server.port == 8288:
 
-            # for one_cached_output in current_outputs:
-            #     print(f"cached for {one_cached_output} = {self.caches.outputs.get(one_cached_output)}")
+                # print("execution list (preflight)::", execution_list.__dict__)
 
-            # for node_id in list(execute_outputs):
-            #     print("node from execution list (initial):::", node_id)
-            #     execution_list.add_node(node_id)
-            #     logging.debug(f"Added node {node_id} to execution list")
-
-
-            print("execution list (preflight)::", execution_list.__dict__)
-
-            # Short Circuit
-            result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
-            self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
-            # print("done yalla")
-
-            # while not execution_list.is_empty():
-            #     node_id, error, ex = execution_list.stage_node_execution()
-            #     print("while entry::", node_id, '*', error, '*', ex)
-            #     if error is not None:
-            #         logging.error(f"Error staging node {node_id} for execution")
-            #         self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
-            #         break
-
-            #     print(f"Executing node {node_id}")
+                # self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
                 
-            #     # Check if this node should be executed remotely
-            #     node = dynamic_prompt.get_node(node_id)
-            #     class_type = node["class_type"]
-            #     class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
-                
-            #     # if hasattr(class_def, 'EXECUTION_TARGET') and class_def.EXECUTION_TARGET != 'local':
-            #     if int(node_id) >= 10:  # This is temporary, should use EXECUTION_TARGET
-            #         target_port = 8288  # This is temporary, should use EXECUTION_TARGET
-                    
-            #         # Skip remote execution if we're already on the target port
-            #         if self.server.port == target_port:
-            #             print(f"Already on target port {target_port}, executing locally")
-            #             result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
-            #             self.success = result != ExecutionResult.FAILURE
-            #             if result == ExecutionResult.FAILURE:
-            #                 self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
-            #                 break
-            #             elif result == ExecutionResult.PENDING:
-            #                 execution_list.unstage_node_execution()
-            #             else:
-            #                 execution_list.complete_node_execution()
-            #             continue
-                    
-            #         try:
-            #             # Find worker for target port
-            #             print(f"Looking for worker with port {target_port} (current port is {self.server.port})")
-            #             worker = None
-            #             for worker_id, w in self.server.distributed_manager.worker_instances.items():
-            #                 print(f"Checking worker {worker_id} with port {w.port}")
-            #                 if w.port == target_port:
-            #                     worker = w
-            #                     print(f"Found matching worker: {worker_id}")
-            #                     break
-                                
-            #             if not worker:
-            #                 raise Exception(f"No worker found for target port {target_port}")
-                            
-            #             # Execute node on remote worker
-            #             import requests
-            #             url = f"{worker.base_url}/distributed/execute_node"
-            #             node_data = {
-            #                 "id": node_id,
-            #                 "class_type": class_type,
-            #                 "inputs": node["inputs"]
-            #             }
-                        
-            #             print(f"Sending execution request to {url}")
-            #             print(f"Node data: {node_data}")
-                        
-            #             response = requests.post(url, json={"node_data": node_data})
-            #             print(f"Got response with status code: {response.status_code}")
-                        
-            #             if response.status_code != 200:
-            #                 raise Exception(f"Remote execution failed with status {response.status_code}")
-                            
-            #             result = response.json()
-            #             print(f"Response data: {result}")
-                        
-            #             if result["status"] != "queued":
-            #                 raise Exception("Remote execution not queued")
+                # print("done yalla")
 
-            #             print("Waiting 10 seconds for remote execution to complete...")
-            #             import time
-            #             time.sleep(10)
-                            
-            #             # Check if execution is complete
-            #             remote_prompt_id = result["prompt_id"]
-            #             status_url = f"{worker.base_url}/distributed/node_status/{remote_prompt_id}"
-            #             print(f"Checking execution status at {status_url}")
+
+
+                # Short Circuit                
+                result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
+                self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)            
+                result, error, ex = ExecutionResult.PENDING, None, None
+
+                print("cave result::", result)
+                print("cave error::", error)
+                print("cave ex::", ex)
+
+                # self.success = result != ExecutionResult.FAILURE
+                # if result == ExecutionResult.FAILURE:
+                #     logging.error(f"Node {node_id} execution failed")
+                #     self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
+                #     # break
+                # elif result == ExecutionResult.PENDING:
+                #     logging.debug(f"Node {node_id} execution pending")
+                #     execution_list.unstage_node_execution()
+                # else: # result == ExecutionResult.SUCCESS:
+                #     logging.debug(f"Node {node_id} execution completed successfully")
+                #     execution_list.complete_node_execution()
+
+            else:
+                current_outputs = self.caches.outputs.all_node_ids()
+
+                # for one_cached_output in current_outputs:
+                #     print(f"cached for {one_cached_output} = {self.caches.outputs.get(one_cached_output)}")
+
+                for node_id in list(execute_outputs):
+                    print("node from execution list (initial):::", node_id)
+                    execution_list.add_node(node_id)
+                    logging.debug(f"Added node {node_id} to execution list")
+
+
+                while not execution_list.is_empty():
+                    node_id, error, ex = execution_list.stage_node_execution()
+                    print("while entry::", node_id, '*', error, '*', ex)
+                    if error is not None:
+                        logging.error(f"Error staging node {node_id} for execution")
+                        self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
+                        break
+
+                    print(f"Executing node {node_id}")
+                    
+                    # Check if this node should be executed remotely
+                    node = dynamic_prompt.get_node(node_id)
+                    class_type = node["class_type"]
+                    class_def = nodes.NODE_CLASS_MAPPINGS[class_type]
+                    
+                    # machine = node["_meta"].get("machine", execution_machine.get(node_id, "localhost:8188") )
+                    machine = execution_machine.get(node_id, "localhost:8188")
+
+                    print("~"*50)
+                    print(f"node ({machine})::", node)
+                    # print("-"*50)
+
+                    
+                    if self.server.port == 8188:
+                        # execute locally
                         
-            #             status_response = requests.get(status_url)
-            #             print(f"Status response code: {status_response.status_code}")
-                        
-            #             if status_response.status_code == 200:
-            #                 status_result = status_response.json()
-            #                 print(f"Status result: {status_result}")
-                            
-            #                 if status_result["status"] == "completed":
-            #                     print("Remote execution completed, fetching output...")
-            #                     # Store output in cache
-            #                     output_url = f"{worker.base_url}/distributed/node_output/{node_id}"
-            #                     output_response = requests.get(output_url)
-            #                     print(f"Output response code: {output_response.status_code}")
+                        if machine == "localhost:8188":
+                            print("executing locally for node:", node_id)
+                            # Continue with local execution if not remote
+                            result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
+                            print("das results::", result)
+                            print("das error::", error)
+                            print("das ex::", ex)
+
+                        else:
+                            # DO API call
+                            print("executing remotely for node:", node_id)
+
+
+                                                    
+                        #     try:
+                        #         # Find worker for target port
+                        #         print(f"Looking for worker with port {target_port} (current port is {self.server.port})")
+                        #         worker = None
+                        #         for worker_id, w in self.server.distributed_manager.worker_instances.items():
+                        #             print(f"Checking worker {worker_id} with port {w.port}")
+                        #             if w.port == target_port:
+                        #                 worker = w
+                        #                 print(f"Found matching worker: {worker_id}")
+                        #                 break
+                                        
+                        #         if not worker:
+                        #             raise Exception(f"No worker found for target port {target_port}")
+
+                            # Execute node on remote worker
+                            import requests
+                            # url = f"{worker.base_url}/distributed/execute_node"
+                            url = f"http://localhost:8288/distributed/execute_node"
+                            node_data = {
+                                "id": node_id,
+                                "class_type": class_type,
+                                "inputs": node["inputs"]
+                            }
                                 
-            #                     if output_response.status_code == 200:
-            #                         output_result = output_response.json()
-            #                         print(f"Output result: {output_result}")
+                            print(f"Sending execution request to {url}")
+                            print(f"Node data: {node_data}")
+                                
+                            response = requests.post(url, json={"node_data": node_data})
+                            print(f"Got response with status code: {response.status_code}")
+                                
+                            if response.status_code != 200:
+                                raise Exception(f"Remote execution failed with status {response.status_code}")
+                            
+
+                        
+                            result = response.json()
+                            print(f"Response data: {result}")
+                                
+                            if result["status"] != "queued": raise Exception("Remote execution not queued")
+
+                            print("Waiting few seconds for remote execution to complete...")
+                            import time
+                            if node_id == "5":
+                                time.sleep(5)
+                            else:
+                                time.sleep(20)
+                                
+                            # Check if execution is complete
+                            remote_prompt_id = result["prompt_id"]
+                            status_url = f"http://localhost:8288/distributed/node_status/{remote_prompt_id}"
+                            print(f"Checking execution status at {status_url}")
+                                
+                            status_response = requests.get(status_url)
+                            print(f"Status response code: {status_response.status_code}")
+                                
+                            if status_response.status_code == 200:
+                                status_result = status_response.json()
+                                print(f"Status result: {status_result}")
+                                
+                                if status_result["status"] == "completed":
+                                    print("Remote execution completed, fetching output...")
+                                    # Store output in cache
+                                    output_url = f"http://localhost:8288/distributed/node_output/{node_id}"
+                                    output_response = requests.get(output_url)
+                                    print(f"Output response code: {output_response.status_code}")
                                     
-            #                         if output_result["status"] == "success":
-            #                             print("Successfully got output, deserializing...")
-            #                             # Deserialize and store output
-            #                             output_data = [deserialize_output(x) for x in output_result["output_data"]]
-            #                             print(f"Deserialized output: {output_data}")
+                                    # if output_response.status_code == 200:
+                                    #     output_result = output_response.json()
+                                    #     print(f"Output result: {output_result}")
                                         
-            #                             self.caches.outputs.set(node_id, output_data)
-            #                             executed.add(node_id)
-            #                             execution_list.complete_node_execution()
-            #                             print(f"Node {node_id} remote execution completed successfully")
-            #                             continue
-                                        
-            #             print(f"Remote execution still pending for node {node_id}, will retry later")
-            #             execution_list.unstage_node_execution()
-            #             continue
-                            
-            #         except Exception as ex:
-            #             print(f"Remote execution failed for node {node_id}: {str(ex)}")
-            #             print(f"Traceback: {traceback.format_exc()}")
-            #             error = {
-            #                 "node_id": node_id,
-            #                 "exception_message": str(ex),
-            #                 "exception_type": "RemoteExecutionError", 
-            #                 "traceback": traceback.format_exc(),
-            #                 "current_inputs": {}
-            #             }
-            #             self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
-            #             break
+                                    #     if output_result["status"] == "success":
+                                    #         print("Successfully got output, deserializing...")
+                                    #         # Deserialize and store output
+                                    #         output_data = [deserialize_output(x) for x in output_result["output_data"][0]]
+                                    #         print(f"Deserialized output: {output_data}")
+                                            
 
-            #     # Continue with local execution if not remote
-            #     result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
-                
-                
-            #     self.success = result != ExecutionResult.FAILURE
-            #     if result == ExecutionResult.FAILURE:
-            #         logging.error(f"Node {node_id} execution failed")
-            #         self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
-            #         break
-            #     elif result == ExecutionResult.PENDING:
-            #         logging.debug(f"Node {node_id} execution pending")
-            #         execution_list.unstage_node_execution()
-            #     else: # result == ExecutionResult.SUCCESS:
-            #         logging.debug(f"Node {node_id} execution completed successfully")
-            #         execution_list.complete_node_execution()
-            # else:
-            #     # Only execute when the while-loop ends without break
-            #     logging.info(f"Prompt {prompt_id} execution completed successfully")
-            #     self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
+
+
+
+                                            
+                                    #         self.caches.outputs.set(node_id, output_data)
+                                    #         executed.add(node_id)
+                                    #         execution_list.complete_node_execution()
+                                    #         print(f"Node {node_id} remote execution completed successfully")
+                                    #         continue
+                                                
+                                # print(f"Remote execution still pending for node {node_id}, will retry later")
+                                # execution_list.unstage_node_execution()
+                                # continue
+                                    
+                            # except Exception as ex:
+                            #     print(f"Remote execution failed for node {node_id}: {str(ex)}")
+                            #     print(f"Traceback: {traceback.format_exc()}")
+                            #     error = {
+                            #         "node_id": node_id,
+                            #         "exception_message": str(ex),
+                            #         "exception_type": "RemoteExecutionError", 
+                            #         "traceback": traceback.format_exc(),
+                            #         "current_inputs": {}
+                            #     }
+                            #     self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
+                            #     break
+
+                    elif self.server.port == 8288:
+                        # execute remotely
+                        print("executing on 8222 (via api) for node:", node_id)
+                        pass
+                    
+                    self.success = result != ExecutionResult.FAILURE
+                    if result == ExecutionResult.FAILURE:
+                        logging.error(f"Node {node_id} execution failed")
+                        self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
+                        break
+                    elif result == ExecutionResult.PENDING:
+                        logging.debug(f"Node {node_id} execution pending")
+                        execution_list.unstage_node_execution()
+                    else: # result == ExecutionResult.SUCCESS:
+                        logging.debug(f"Node {node_id} execution completed successfully")
+                        execution_list.complete_node_execution()
+                else:
+                    # Only execute when the while-loop ends without break
+                    logging.info(f"Prompt {prompt_id} execution completed successfully")
+                    self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
+
 
             logging.debug("Collecting UI outputs and meta information")
             ui_outputs = {}
@@ -1106,9 +1126,9 @@ class PromptExecutor:
                 "meta": meta_outputs,
             }
             self.server.last_node_id = None
-            # if comfy.model_management.DISABLE_SMART_MEMORY:
-            #     logging.info("Smart memory disabled, unloading all models")
-            #     comfy.model_management.unload_all_models()
+            if comfy.model_management.DISABLE_SMART_MEMORY:
+                logging.info("Smart memory disabled, unloading all models")
+                comfy.model_management.unload_all_models()
 
 
 def validate_inputs(prompt, item, validated):

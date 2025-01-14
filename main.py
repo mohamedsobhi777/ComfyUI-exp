@@ -199,7 +199,7 @@ def prompt_worker(q, server_instance):
             print("gotten item::[3]", item[3])
             print("gotten item::[4]", item[4])
 
-            print("but this is the pre-cache::", e.caches.recursive_debug_dump())
+            # print("but this is the pre-cache::", e.caches.recursive_debug_dump())
 
             # Execute the prompt
             e.execute(item[2], prompt_id, item[3], item[4])
