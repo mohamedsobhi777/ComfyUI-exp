@@ -903,12 +903,25 @@ class PromptServer():
             prompt_id = request.match_info.get("prompt_id")
             if not prompt_id:
                 return web.Response(status=400, text="Prompt ID is required")
+            
+            # Check if this prompt_id exists in the current queue
+            current_queue = self.prompt_queue.get_current_queue()
+            queued_items = current_queue[0] + current_queue[1]  # Combine running and pending
+            
+            for _, pid, *_ in queued_items:
+                if pid == prompt_id:
+                    return web.json_response({
+                        "status": "pending",
+                        "message": "Prompt is queued for execution"
+                    })
                 
+            # Check history for completed prompts
             history = self.prompt_queue.get_history(prompt_id=prompt_id)
             if not history:
                 return web.json_response({
-                    "status": "pending"
-                })
+                    "status": "not_found",
+                    "message": "Invalid prompt ID or prompt not found in queue/history"
+                }, status=404)
                 
             return web.json_response({
                 "status": "completed",
