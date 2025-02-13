@@ -4,14 +4,14 @@ comfy.options.enable_args_parsing()  # Enable command line argument parsing for 
 
 # Standard library imports
 import os
-import importlib.util
-import folder_paths
 import time
+import logging
+import itertools
+import folder_paths
+import importlib.util
+import utils.extra_config
 from comfy.cli_args import args  # Import command line arguments
 from app.logger import setup_logger
-import itertools
-import utils.extra_config
-import logging
 
 if __name__ == "__main__":
     #NOTE: These do not do anything on core ComfyUI which should already have no communication with the internet, they are for custom nodes.
@@ -211,7 +211,10 @@ def prompt_worker(q, server_instance):
                             status_str='success' if e.success else 'error',
                             completed=e.success,
                             messages=e.status_messages))
+            print("server_instance_client_id::", server_instance.client_id)
             if server_instance.client_id is not None:
+                print("sending executing to client")
+                print("prompt_id::", prompt_id)
                 server_instance.send_sync("executing", {"node": None, "prompt_id": prompt_id}, server_instance.client_id)
 
             # Log execution time
@@ -258,7 +261,7 @@ def hijack_progress(server_instance):
     def hook(value, total, preview_image):
         comfy.model_management.throw_exception_if_processing_interrupted()
         progress = {"value": value, "max": total, "prompt_id": server_instance.last_prompt_id, "node": server_instance.last_node_id}
-
+        print(f"progress:: {progress}, max:: {total}, prompt_id:: {server_instance.last_prompt_id}, node:: {server_instance.last_node_id}")
         server_instance.send_sync("progress", progress, server_instance.client_id)
         if preview_image is not None:
             server_instance.send_sync(BinaryEventTypes.UNENCODED_PREVIEW_IMAGE, preview_image, server_instance.client_id)

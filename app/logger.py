@@ -1,9 +1,9 @@
+import io
+import sys
+import logging
+import threading
 from collections import deque
 from datetime import datetime
-import io
-import logging
-import sys
-import threading
 
 logs = None
 stdout_interceptor = None
@@ -11,6 +11,19 @@ stderr_interceptor = None
 
 
 class LogInterceptor(io.TextIOWrapper):
+    """
+    Intercepts and captures standard output/error streams while maintaining original functionality.
+    
+    Features:
+    - Captures log entries in a thread-safe buffer
+    - Handles carriage return (\r) characters to prevent progress message duplication
+    - Provides flush callback mechanism for real-time log processing
+    
+    Attributes:
+    _lock: Threading lock for concurrent access safety
+    _flush_callbacks: Registered callbacks for flush events
+    _logs_since_flush: Temporary buffer between flush calls
+    """
     def __init__(self, stream,  *args, **kwargs):
         buffer = stream.buffer
         encoding = stream.encoding
@@ -52,6 +65,19 @@ def on_flush(callback):
         stderr_interceptor.on_flush(callback)
 
 def setup_logger(log_level: str = 'INFO', capacity: int = 300, use_stdout: bool = False):
+    """
+    Configures the global logging system with custom output handling.
+    
+    Args:
+        log_level (str): Minimum severity level for logging (DEBUG, INFO, WARNING, ERROR)
+        capacity (int): Maximum number of log entries to retain in memory
+        use_stdout (bool): When True, splits logs between stdout (INFO) and stderr (ERROR+)
+    
+    Initializes:
+        - Global logs deque with specified capacity
+        - stdout/stderr interceptors for output capture
+        - Logging handlers with appropriate filters
+    """
     global logs
     if logs:
         return

@@ -115,30 +115,32 @@ from comfy_execution.caching import HierarchicalCache, LRUCache, CacheKeySetInpu
 
 
 execution_machine = {
-    "4": "localhost:8188",
-    "6": "localhost:8188",
-    "7": "localhost:8188",
-    "3": "localhost:8188",
-    "5": "localhost:8288",
-    "8": "localhost:8188",
-    "9": "localhost:8288",
-
-    "10": "localhost:8288",
-    "11": "localhost:8288",
-    "12": "localhost:8288",
-    "14": "localhost:8288",
-    "15": "localhost:8288"
+    "23": "localhost:8188",
+    "24": "localhost:8188",
+    "25": "localhost:8188",
+    "26": "localhost:8188",
+    "27": "localhost:8188",
+    "28": "localhost:8188",
+    "29": "localhost:8188",
+    
+    "16": "localhost:8288",
+    "17": "localhost:8288",
+    "18": "localhost:8288",
+    "19": "localhost:8288",
+    "20": "localhost:8288",
+    "21": "localhost:8288",
+    "22": "localhost:8288"
 }
 
 # execution_machine = {
-#     "4": "localhost:8288",
-#     "6": "localhost:8288",
-#     "7": "localhost:8288",
+#     "4": "localhost:8188",
+#     "6": "localhost:8188",
+#     "7": "localhost:8188",
 
-#     "3": "localhost:8288",
-#     "5": "localhost:8288",
-#     "8": "localhost:8288",
-#     "9": "localhost:8288",
+#     "3": "localhost:8188",
+#     "5": "localhost:8188",
+#     "8": "localhost:8188",
+#     "9": "localhost:8188",
 # }
 
 
@@ -273,7 +275,7 @@ def get_remote_node_output(node_id, node_execution_machine):
         
     try:
         import requests
-        url = f"http://{node_execution_machine}/distributed/node_output/{node_id}"
+        url = f"http://{node_execution_machine}/guo/distributed/node_output/{node_id}"
         response = requests.get(url)
         
         if response.status_code == 200:
@@ -539,7 +541,22 @@ def format_value(x):
     else:
         return str(x)
 
+import re
 
+def extract_url(input_string):
+    # Define the regex pattern
+    pattern = r'^(.*)\((http[s]?://[^\s]+)\)$'
+    
+    # Perform regex matching
+    match = re.match(pattern, input_string)
+    
+    if match:
+        # Return the URL if the pattern matches
+        return match.group(2)
+    else:
+        print("bad input::", input_string)
+        # Raise an error if the pattern does not match
+        raise ValueError("Input does not follow the required schema.")
 
 
 def execute(server, dynprompt, caches, current_item, extra_data, executed, prompt_id, execution_list, pending_subgraph_results):
@@ -830,15 +847,18 @@ class PromptExecutor:
         #     print("all cached nodes(initial)::", cached_nodes)
 
 
-        # print("execute workflow in execution.py::")
-        # print("prompt::", prompt)
+        print("execute workflow in execution.py::")
+        print("prompt::", prompt)
         # print("")
         print("prompt_id::", prompt_id)
         # print("")
-        # print("extra_data::", extra_data)
-        # print("")
-        # print("execute_outputs::", execute_outputs)
-        # print("")
+        print("extra_data::", extra_data)
+        print("")
+        print("execute_outputs::", execute_outputs)
+        print("")
+
+
+        
 
 
         if "client_id" in extra_data:
@@ -901,9 +921,9 @@ class PromptExecutor:
             #     print("21--", self.caches.outputs.get("21"))
 
             cached_nodes = []
-            for node_id in prompt:
-                if self.caches.outputs.get(node_id) is not None:
-                    cached_nodes.append(node_id)
+            # for node_id in prompt:
+            #     if self.caches.outputs.get(node_id) is not None:
+            #         cached_nodes.append(node_id)
 
             # print("all cached nodes::", cached_nodes)
 
@@ -923,7 +943,14 @@ class PromptExecutor:
                 # print("execution list (preflight)::", execution_list.__dict__)
                 # self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)
                 # print("done yalla")
-                # Short Circuit                
+                # Short Circuit     
+                
+                node_id = list(prompt.keys())[0]           
+                
+                # print("shortcut prompt:")
+                # print("node_id:)", node_id)
+                # print("extra_data:)", extra_data)
+
                 result, error, ex = execute(self.server, dynamic_prompt, self.caches, node_id, extra_data, executed, prompt_id, execution_list, pending_subgraph_results)
                 self.add_message("execution_success", { "prompt_id": prompt_id }, broadcast=False)            
                 result, error, ex = ExecutionResult.PENDING, None, None
@@ -941,6 +968,10 @@ class PromptExecutor:
                 #     execution_list.complete_node_execution()
 
             else:
+                all_nodes_extra_data = extra_data["extra_pnginfo"]["workflow"]["nodes"]
+                
+
+                
                 current_outputs = self.caches.outputs.all_node_ids()
 
                 # for one_cached_output in current_outputs:
@@ -954,12 +985,22 @@ class PromptExecutor:
 
                 while not execution_list.is_empty():
                     node_id, error, ex = execution_list.stage_node_execution()
+                    print(f"staging node >>> {node_id}")
                     # print("while entry::", node_id, '*', error, '*', ex)
                     if error is not None:
                         logging.error(f"Error staging node {node_id} for execution")
                         self.handle_execution_error(prompt_id, dynamic_prompt.original_prompt, current_outputs, executed, error, ex)
                         break
                     
+
+                    node_extra_data = [node for node in all_nodes_extra_data if str(node["id"]) == node_id][0]
+                    node_title = node_extra_data["title"]
+                    node_target_machine = extract_url(node_title)
+                    # print("node_extra_data", node_extra_data)
+                    print("node_title:)", node_title)
+                    print("node_target_machine:)", node_target_machine)
+
+
                     # Check if this node should be executed remotely
                     node = dynamic_prompt.get_node(node_id)
                     class_type = node["class_type"]
@@ -998,17 +1039,16 @@ class PromptExecutor:
                         # url = f"{worker.base_url}/distributed/execute_node"
                         if node_id in remote_nodes_prompt_ids:
                             remote_prompt_id = remote_nodes_prompt_ids[node_id]
-                            status_url = f"http://localhost:8288/distributed/node_status/{remote_prompt_id}"
+                            status_url = f"http://localhost:8288/guo/distributed/node_status/{remote_prompt_id}"
                             # print(f"Checking execution status at {status_url}")
                             status_response = requests.get(status_url)
                             
                             if status_response.status_code == 200:
                                 status_result = status_response.json()
                                 
-                                
                                 if status_result["status"] == "completed":
                                                                         # Store output in cache
-                                    output_url = f"http://localhost:8288/distributed/node_output/{node_id}"
+                                    output_url = f"http://localhost:8288/guo/distributed/node_output/{node_id}"
                                     output_response = requests.get(output_url)
                                     # print(f"Output response code: {output_response.status_code}")
                                     
@@ -1035,7 +1075,7 @@ class PromptExecutor:
 
 
                         else:
-                            url = f"http://localhost:8288/distributed/execute_node"
+                            url = f"http://localhost:8288/guo/distributed/execute_node"
                             
                             node_data = { "id": node_id, "class_type": class_type, "inputs": node["inputs"] }
                             response = requests.post(url, json={"node_data": node_data})

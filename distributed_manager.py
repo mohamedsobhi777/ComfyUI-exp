@@ -46,7 +46,7 @@ class DistributedManager:
         """Get list of currently registered workers from main instance."""
         try:
             logger.info("D5. Fetching registered workers")
-            response = requests.get(f"{self.main_url}/distributed/workers")
+            response = requests.get(f"{self.main_url}/guo/distributed/workers")
             if response.status_code == 200:
                 workers = response.json()
                 logger.info(f"D6. Found {len(workers)} registered workers")
@@ -106,7 +106,7 @@ class DistributedManager:
             # Register worker
             logger.info(f"D14. Registering worker with main instance")
             response = requests.post(
-                f"{self.main_url}/distributed/add_worker",
+                f"{self.main_url}/guo/distributed/add_worker",
                 json={"host": "localhost", "port": port}
             )
             
@@ -149,7 +149,7 @@ class DistributedManager:
                 if worker_id:
                     logger.info(f"Deregistering worker {worker_id} from main instance")
                     response = requests.post(
-                        f"{self.main_url}/distributed/remove_worker",
+                        f"{self.main_url}/guo/distributed/remove_worker",
                         json={"worker_id": worker_id}
                     )
                     if response.status_code == 200:

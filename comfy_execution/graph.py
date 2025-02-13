@@ -1,7 +1,7 @@
 # Import required modules
 import nodes
 import logging
-
+import time
 from comfy_execution.graph_utils import is_link
 
 # Custom exceptions for graph-related errors
@@ -200,6 +200,7 @@ class ExecutionList(TopologicalSort):
         super().__init__(dynprompt)
         self.output_cache = output_cache
         self.staged_node_id = None
+        self.last_access_times = {}
         logging.info("Initialized ExecutionList")
 
     def is_cached(self, node_id):
@@ -215,6 +216,7 @@ class ExecutionList(TopologicalSort):
         if self.is_empty():
             logging.info("No nodes left to execute")
             return None, None, None
+        
         available = self.get_ready_nodes()
         if len(available) == 0:
             cycled_nodes = self.get_nodes_in_cycle()
@@ -237,7 +239,7 @@ class ExecutionList(TopologicalSort):
             logging.error(f"Dependency cycle detected, blamed node: {blamed_node}")
             return None, error_details, ex
 
-        self.staged_node_id = self.ux_friendly_pick_node(available)
+        self.staged_node_id = self.performance_friendly_pick_node(available)
         logging.info(f"Staged node {self.staged_node_id} for execution")
         return self.staged_node_id, None, None
 
@@ -278,16 +280,34 @@ class ExecutionList(TopologicalSort):
         logging.info(f"Selected first available node {node_list[0]}")
         return node_list[0]
 
+    
+    def performance_friendly_pick_node(self, node_list):
+        current_time = time.time()
+        
+        # Update last access times for all nodes in the list
+        for node_id in node_list:
+            if node_id not in self.last_access_times:
+                self.last_access_times[node_id] = 0
+        
+        # Find the node with the lowest last access time
+        selected_node = min(node_list, key=lambda node: self.last_access_times[node])
+        
+        # Update the last access time for the selected node
+        self.last_access_times[selected_node] = current_time
+        
+        logging.info(f"Selected node {selected_node} for execution based on performance criteria")
+        return selected_node
+
     def unstage_node_execution(self):
-        """Cancel staging of current node"""
         assert self.staged_node_id is not None
         logging.info(f"Unstaging node {self.staged_node_id}")
         self.staged_node_id = None
 
     def complete_node_execution(self):
-        """Mark staged node as complete and remove from graph"""
         node_id = self.staged_node_id
         self.pop_node(node_id)
+        # Reset the last access time when unstaging
+        self.last_access_times[node_id] = 0
         self.staged_node_id = None
         logging.info(f"Completed execution of node {node_id}")
 

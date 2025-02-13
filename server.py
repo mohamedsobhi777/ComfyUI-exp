@@ -718,7 +718,7 @@ class PromptServer():
             queue_info['queue_running'] = current_queue[0]
             queue_info['queue_pending'] = current_queue[1]
             return web.json_response(queue_info)
-
+        
         @routes.post("/prompt")
         async def post_prompt(request):
             """Submit new prompt for execution"""
@@ -823,156 +823,6 @@ class PromptServer():
                     self.prompt_queue.delete_history_item(id_to_delete)
 
             return web.Response(status=200)
-
-        @routes.post("/distributed/add_worker")
-        async def add_worker(request):
-            try:
-                data = await request.json()
-                host = data.get("host", "localhost")
-                port = data.get("port")
-                if not port:
-                    return web.Response(status=400, text="Port is required")
-                worker_id = self.distributed_manager.add_worker(host, port)
-                return web.json_response({"worker_id": worker_id})
-            except Exception as e:
-                return web.Response(status=500, text=str(e))
-
-        @routes.post("/distributed/remove_worker")
-        async def remove_worker(request):
-            try:
-                data = await request.json()
-                worker_id = data.get("worker_id")
-                if not worker_id:
-                    return web.Response(status=400, text="Worker ID is required")
-                self.distributed_manager.remove_worker(worker_id)
-                return web.Response(status=200)
-            except Exception as e:
-                return web.Response(status=500, text=str(e))
-
-        @routes.get("/distributed/workers")
-        async def get_workers(request):
-            try:
-                workers = []
-                for worker_id, worker in self.distributed_manager.worker_instances.items():
-                    workers.append({
-                        "worker_id": worker_id,
-                        "host": worker.host,
-                        "port": worker.port,
-                        "status": worker.status
-                    })
-                return web.json_response(workers)
-            except Exception as e:
-                return web.Response(status=500, text=str(e))
-
-        @routes.post("/distributed/execute_node")
-        async def execute_node(request):
-            """Execute a single node on this instance"""
-            print("received a request to execute from.")
-            try:
-                data = await request.json()
-                node_data = data.get("node_data")
-                print("node_data::", node_data)
-                if not node_data:
-                    return web.Response(status=400, text="Node data is required")
-                
-                # Create a minimal prompt with just this node
-                prompt = {
-                    node_data["id"]: {
-                        "class_type": node_data["class_type"],
-                        "inputs": node_data["inputs"]
-                    }
-                }
-                
-                # Execute the node
-                prompt_id = str(uuid.uuid4())
-                self.prompt_queue.put((0, prompt_id, prompt, {}, [node_data["id"]]))
-                
-                print("prompt id::", prompt_id)
-                print("*"*20)
-
-                return web.json_response({
-                    "prompt_id": prompt_id,
-                    "status": "queued"
-                })
-            except Exception as e:
-                return web.Response(status=500, text=str(e))
-
-        @routes.get("/distributed/node_status/{prompt_id}")
-        async def get_node_status(request):
-            """Get status of a node execution"""
-            prompt_id = request.match_info.get("prompt_id")
-            if not prompt_id:
-                return web.Response(status=400, text="Prompt ID is required")
-            
-            # Check if this prompt_id exists in the current queue
-            current_queue = self.prompt_queue.get_current_queue()
-            queued_items = current_queue[0] + current_queue[1]  # Combine running and pending
-            
-            for _, pid, *_ in queued_items:
-                if pid == prompt_id:
-                    return web.json_response({
-                        "status": "pending",
-                        "message": "Prompt is queued for execution"
-                    })
-                
-            # Check history for completed prompts
-            history = self.prompt_queue.get_history(prompt_id=prompt_id)
-            if not history:
-                return web.json_response({
-                    "status": "not_found",
-                    "message": "Invalid prompt ID or prompt not found in queue/history"
-                }, status=404)
-                
-            return web.json_response({
-                "status": "completed",
-                "result": history[prompt_id]
-            })
-
-        @routes.get("/distributed/node_output/{node_id}")
-        async def get_node_output(request):
-            """Get output data for a specific node"""
-            node_id = request.match_info.get("node_id")
-            if not node_id:
-                return web.Response(status=400, text="Node ID is required")
-
-            try:
-                # Get the output from the executor's cache
-                if not hasattr(self, 'executor'):
-                    return web.json_response({
-                        "status": "error",
-                        "error": "No executor available - server might be initializing"
-                    })
-
-                outputs = self.executor.caches.outputs
-                output_data = outputs.get(node_id)
-                
-                if output_data is None:
-                    return web.json_response({
-                        "status": "not_found",
-                        "message": f"No output found for node {node_id}"
-                    })
-
-                # Convert output data to serializable format
-                serializable_output = []
-                for output in output_data:
-                    if isinstance(output, (list, tuple)):
-                        serializable_output.append([self.serialize_output(x) for x in output])
-                    else:
-                        serializable_output.append(self.serialize_output(output))
-
-                return web.json_response({
-                    "status": "success",
-                    "node_id": node_id,
-                    "output_data": serializable_output
-                })
-
-            except Exception as e:
-                logging.error(f"Error getting node output: {str(e)}")
-                logging.error(traceback.format_exc())
-                return web.json_response({
-                    "status": "error",
-                    "error": str(e)
-                }, status=500)
 
     def serialize_output(self, obj):
         """Serialize different types of node outputs"""
@@ -1152,6 +1002,7 @@ class PromptServer():
             await send_socket_catch_exception(self.sockets[sid].send_json, message)
 
     def send_sync(self, event, data, sid=None):
+        print(f"sending sync:: event: {event}, data: {data}, sid: {sid}")
         self.loop.call_soon_threadsafe(
             self.messages.put_nowait, (event, data, sid))
 
